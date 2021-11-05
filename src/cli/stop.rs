@@ -2,7 +2,7 @@ use crate::grafana;
 use anyhow::Result;
 use clap::{App, AppSettings, Arg, ArgMatches};
 
-pub async fn cli<'help>(tags: &'help [&'help str]) -> App<'help> {
+pub async fn cli<'help>(_tags: &'help [&'help str]) -> App<'help> {
     App::new("stop")
         .about("stop running version")
         .setting(AppSettings::TrailingVarArg)

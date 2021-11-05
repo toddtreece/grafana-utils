@@ -3,11 +3,10 @@ use clap::{App, AppSettings};
 use clap_generate::{generate, generators::Zsh};
 
 use cli::completion;
-use cli::start;
-use cli::stop;
 
 mod cli;
 mod grafana;
+mod plugin;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -17,15 +16,17 @@ async fn main() -> Result<()> {
     let mut app = App::new("Grafana Utils")
         .setting(AppSettings::TrailingVarArg)
         .bin_name("grf")
-        .subcommand(start::cli(&tags).await)
-        .subcommand(stop::cli(&tags).await)
+        .subcommand(cli::start::cli(&tags).await)
+        .subcommand(cli::stop::cli(&tags).await)
+        .subcommand(cli::plugin::cli(&tags).await)
         .subcommand(completion::cli());
 
     let matches = app.clone().get_matches();
 
     match matches.subcommand() {
-        Some(("start", sub_matches)) => start::handle(sub_matches).await?,
-        Some(("stop", sub_matches)) => stop::handle(sub_matches).await?,
+        Some(("start", sub_matches)) => cli::start::handle(sub_matches).await?,
+        Some(("stop", sub_matches)) => cli::stop::handle(sub_matches).await?,
+        Some(("build", sub_matches)) => cli::plugin::handle(sub_matches).await?,
         Some(("completion", _)) => generate::<Zsh, _>(&mut app, "grf", &mut std::io::stdout()),
         _ => println!("{}", app.generate_usage()),
     }
