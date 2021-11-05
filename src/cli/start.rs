@@ -9,19 +9,25 @@ pub async fn cli<'help>(tags: &'help [&'help str]) -> App<'help> {
         .arg(
             Arg::new("enterprise")
                 .short('e')
-                .about("Use grafana enterprise container")
+                .about("Use grafana enterprise image")
+                .takes_value(false),
+        )
+        .arg(
+            Arg::new("logs")
+                .short('l')
+                .about("Tail the logs of the container")
                 .takes_value(false),
         )
         .arg(
             Arg::new("random-port")
                 .short('r')
-                .about("Use grafana enterprise container")
+                .about("Start grafana on a random open port")
                 .takes_value(false),
         )
         .arg(
             Arg::new("version")
                 .default_value("latest")
-                .about("the grafana version to run")
+                .about("The grafana version to run")
                 .index(1),
         )
 }
@@ -30,5 +36,6 @@ pub async fn handle(matches: &ArgMatches) -> Result<()> {
     let version = matches.value_of("version").unwrap_or("latest");
     let enterprise = matches.is_present("enterprise");
     let random_port = matches.is_present("random-port");
-    grafana::start(enterprise, version, random_port).await
+    let logs = matches.is_present("logs");
+    grafana::start(enterprise, version, random_port, logs).await
 }

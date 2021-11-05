@@ -1,7 +1,8 @@
 use anyhow::Result;
 use dirs::home_dir;
-use futures::StreamExt;
-use shiplift::{ContainerOptions, Docker, PullOptions};
+use futures::stream::StreamExt;
+use shiplift::{tty::TtyChunk, ContainerOptions, Docker, LogsOptions, PullOptions};
+use std::io::Write;
 use std::net::TcpListener;
 
 pub async fn get_image_tags() -> Result<Vec<String>> {
@@ -32,7 +33,7 @@ pub async fn stop(enterprise: bool, version: &str) -> Result<()> {
     let docker = Docker::new();
     let containers = docker.containers().list(&Default::default()).await?;
     for c in containers {
-        if image.eq(&c.image) || version.eq("") {
+        if image.eq(&c.image) || (version.eq("") && c.image.contains("grafana")) {
             let container = docker.containers().get(&c.id);
             println!("stopping container {} - {}...", image, &container.id());
             container.kill(None).await?;
@@ -41,7 +42,7 @@ pub async fn stop(enterprise: bool, version: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn start(enterprise: bool, version: &str, random_port: bool) -> Result<()> {
+pub async fn start(enterprise: bool, version: &str, random_port: bool, log: bool) -> Result<()> {
     let docker = Docker::new();
     let image = get_image(enterprise, version);
 
@@ -59,12 +60,16 @@ pub async fn start(enterprise: bool, version: &str, random_port: bool) -> Result
     }
 
     let home = home_dir().unwrap().to_str().unwrap().to_owned();
+
     let mut plugins = home.clone();
     plugins.push_str("/plugins:/var/lib/grafana/plugins");
+
     let mut conf = home.clone();
     conf.push_str("/.grafana/grafana.ini:/etc/grafana/grafana.ini");
+
     let mut provisioning = home.clone();
     provisioning.push_str("/.grafana/provisioning:/etc/grafana/provisioning");
+
     let mut license = home.clone();
     if enterprise {
         license.push_str("/.grafana/ent-license.jwt:/var/lib/grafana/license.jwt");
@@ -85,6 +90,7 @@ pub async fn start(enterprise: bool, version: &str, random_port: bool) -> Result
         .expose(6060, "tcp", 6060)
         .env(vec![
             "GF_ENTERPRISE_LICENSE_PATH=/var/lib/grafana/license.jwt",
+            "TERM=xterm-256color",
         ])
         .volumes(vec![&plugins, &conf, &provisioning, &license]);
 
@@ -94,5 +100,39 @@ pub async fn start(enterprise: bool, version: &str, random_port: bool) -> Result
     println!("running at http://localhost:{}/explore", port);
     container.start().await?;
 
+    if log {
+        logs(docker.clone(), container.id().to_string()).await;
+    }
+
     Ok(())
+}
+
+async fn logs(docker: shiplift::Docker, id: String) {
+    let container = docker.containers().get(id);
+    let mut logs_stream = container.logs(
+        &LogsOptions::builder()
+            .follow(true)
+            .stdout(true)
+            .stderr(true)
+            .build(),
+    );
+
+    while let Some(log_result) = logs_stream.next().await {
+        match log_result {
+            Ok(chunk) => print_chunk(chunk),
+            Err(e) => eprintln!("Error: {}", e),
+        }
+    }
+}
+
+fn print_chunk(chunk: TtyChunk) {
+    match chunk {
+        TtyChunk::StdOut(bytes) => {
+            std::io::stdout().write_all(&bytes).unwrap();
+        }
+        TtyChunk::StdErr(bytes) => {
+            std::io::stderr().write_all(&bytes).unwrap();
+        }
+        TtyChunk::StdIn(_) => unreachable!(),
+    }
 }
