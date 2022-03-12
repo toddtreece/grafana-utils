@@ -8,6 +8,8 @@ use shiplift::{
 use std::io::Write;
 use std::net::TcpListener;
 
+use crate::plugin;
+
 pub async fn get_image_tags() -> Result<Vec<String>> {
     let docker = Docker::new();
     let image = docker.images().get("grafana/grafana-enterprise");
@@ -63,16 +65,21 @@ pub async fn reload_plugins() -> Result<()> {
         let exec = Exec::create(&docker, &c.id, &opts).await.unwrap();
         let mut stream = exec.start();
         while let Some(r) = stream.next().await {
-            match r {
-                Err(e) => eprintln!("Error: {}", e),
-                _ => {}
+            if let Err(e) = r {
+                eprintln!("Error: {}", e);
             }
         }
     }
     Ok(())
 }
 
-pub async fn start(enterprise: bool, version: &str, random_port: bool, log: bool) -> Result<()> {
+pub async fn start(
+    enterprise: bool,
+    version: &str,
+    random_port: bool,
+    log: bool,
+    proxy: Option<&str>,
+) -> Result<()> {
     let docker = Docker::new();
     let image = get_image(enterprise, version);
 
@@ -83,9 +90,8 @@ pub async fn start(enterprise: bool, version: &str, random_port: bool, log: bool
         .pull(&PullOptions::builder().image(&image).build());
 
     while let Some(pull_result) = stream.next().await {
-        match pull_result {
-            Err(e) => eprintln!("Error: {}", e),
-            _ => {}
+        if let Err(e) = pull_result {
+            eprintln!("Error: {}", e);
         }
     }
 
@@ -115,23 +121,42 @@ pub async fn start(enterprise: bool, version: &str, random_port: bool, log: bool
 
     let mut options = ContainerOptions::builder(&image);
 
+    let mut env = vec![
+        "GF_ENTERPRISE_LICENSE_PATH=/var/lib/grafana/license.jwt".to_owned(),
+        "TERM=xterm-256color".to_owned(),
+    ];
+
+    if let Some(proxy) = proxy {
+        env.push(format!("HTTP_PROXY={}", proxy));
+        env.push(format!("HTTPS_PROXY={}", proxy));
+    }
+
     options
         .expose(3000, "tcp", port)
         .expose(6060, "tcp", 6060)
-        .env(vec![
-            "GF_ENTERPRISE_LICENSE_PATH=/var/lib/grafana/license.jwt",
-            "TERM=xterm-256color",
-        ])
+        .extra_hosts(vec!["host.docker.internal:host-gateway"])
+        .env(env)
         .volumes(vec![&plugins, &conf, &provisioning, &license]);
 
+    options.entrypoint("");
+    options.user("root");
+    options.cmd(vec!["bash", "-c", "update-ca-certificates ; /run.sh"]);
+
     let info = docker.containers().create(&options.build()).await?;
-    let container = docker.containers().get(&info.id);
+    let container = docker.containers().get(&info.id.clone());
+    container
+        .copy_file_into(
+            "/usr/local/share/ca-certificates/e2e-proxy.crt",
+            &plugin::certificate(),
+        )
+        .await?;
 
     println!("running at http://localhost:{}/explore", port);
     container.start().await?;
+    println!("certificate {}", String::from_utf8(plugin::certificate())?);
 
     if log {
-        logs(docker.clone(), container.id().to_string()).await;
+        logs(docker.clone(), info.id).await;
     }
 
     Ok(())

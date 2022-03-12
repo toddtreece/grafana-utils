@@ -25,6 +25,12 @@ pub async fn cli<'help>(_tags: &'help [&'help str]) -> App<'help> {
                 .takes_value(false),
         )
         .arg(
+            Arg::new("proxy")
+                .short('p')
+                .about("Set HTTP_PROXY and HTTPS_PROXY environment variables")
+                .takes_value(true),
+        )
+        .arg(
             Arg::new("version")
                 .default_value("latest")
                 .about("The grafana version to run")
@@ -37,5 +43,6 @@ pub async fn handle(matches: &ArgMatches) -> Result<()> {
     let enterprise = matches.is_present("enterprise");
     let random_port = matches.is_present("random-port");
     let logs = matches.is_present("logs");
-    grafana::start(enterprise, version, random_port, logs).await
+    let proxy = matches.value_of("proxy");
+    grafana::start(enterprise, version, random_port, logs, proxy).await
 }
